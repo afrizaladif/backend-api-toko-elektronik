@@ -12,6 +12,7 @@ from routes.unit_produk_routes import unit_produk_bp
 from routes.supply_routes import supply_bp
 from routes.detail_supply_routes import detail_supply_bp
 from routes.merk_routes import merk_bp
+from routes.kategori_routes import kategori_bp
 
 app = Flask(__name__)
 
@@ -25,6 +26,7 @@ app.register_blueprint(unit_produk_bp)
 app.register_blueprint(supply_bp)
 app.register_blueprint(detail_supply_bp)
 app.register_blueprint(merk_bp)
+app.register_blueprint(kategori_bp)
 
 
 # Endpoint halaman utama
