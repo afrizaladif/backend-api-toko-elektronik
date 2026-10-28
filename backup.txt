@@ -1,0 +1,330 @@
+
+from flask import Flask, jsonify, request
+import mysql.connector
+from mysql.connector import Error, IntegrityError
+from decimal import Decimal
+from datetime import date, datetime, time
+import re
+
+app = Flask(__name__)
+
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 3308,
+    "user": "root",
+    "password": "",
+    "database": "api"
+}
+
+NAMA_VALID = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def koneksi_db():
+    return mysql.connector.connect(**DB_CONFIG)
+
+
+def aman_json(nilai):
+    if isinstance(nilai, Decimal):
+        return float(nilai)
+    if isinstance(nilai, (date, datetime, time)):
+        return nilai.isoformat()
+    return nilai
+
+
+def format_baris(baris):
+    return {kolom: aman_json(nilai)
+            for kolom, nilai in baris.items()}
+
+
+def daftar_tabel_dan_kolom():
+    db = koneksi_db()
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT TABLE_NAME, COLUMN_NAME, COLUMN_KEY
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+            ORDER BY TABLE_NAME, ORDINAL_POSITION
+        """, (DB_CONFIG["database"],))
+
+        hasil = {}
+
+        for baris in cursor.fetchall():
+            tabel = baris["TABLE_NAME"]
+            kolom = baris["COLUMN_NAME"]
+
+            hasil.setdefault(tabel, {
+                "kolom": [],
+                "primary_key": []
+            })
+
+            hasil[tabel]["kolom"].append(kolom)
+
+            if baris["COLUMN_KEY"] == "PRI":
+                hasil[tabel]["primary_key"].append(kolom)
+
+        cursor.close()
+        return hasil
+    finally:
+        db.close()
+
+
+def nama_sql(nama):
+    if not NAMA_VALID.fullmatch(nama):
+        raise ValueError("Nama tabel atau kolom tidak valid.")
+    return f"`{nama}`"
+
+
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({
+        "pesan": "Backend API Toko Elektronik berjalan",
+        "metode": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+        "daftar_tabel": "/api/tables"
+    })
+
+
+@app.route("/api/tables", methods=["GET"])
+def lihat_tabel():
+    try:
+        skema = daftar_tabel_dan_kolom()
+        return jsonify({
+            "pesan": "Daftar tabel berhasil diambil",
+            "data": skema
+        })
+    except Error:
+        app.logger.exception("Gagal membaca struktur database")
+        return jsonify({"error": "Gagal membaca database"}), 500
+
+
+@app.route("/api/<tabel>", methods=["GET", "POST"])
+def koleksi(tabel):
+    try:
+        skema = daftar_tabel_dan_kolom()
+    except Error:
+        app.logger.exception("Koneksi database gagal")
+        return jsonify({"error": "Koneksi database gagal"}), 500
+
+    if tabel not in skema:
+        return jsonify({"error": "Tabel tidak ditemukan"}), 404
+
+    kolom_tabel = skema[tabel]["kolom"]
+    tabel_sql = nama_sql(tabel)
+
+    # GET: membaca daftar data
+    if request.method == "GET":
+        try:
+            limit = int(request.args.get("limit", 100))
+            offset = int(request.args.get("offset", 0))
+
+            if not 1 <= limit <= 500 or offset < 0:
+                return jsonify({
+                    "error": "limit harus 1-500 dan offset minimal 0"
+                }), 400
+        except ValueError:
+            return jsonify({
+                "error": "limit dan offset harus berupa angka"
+            }), 400
+
+        db = koneksi_db()
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute(
+                f"SELECT * FROM {tabel_sql} LIMIT %s OFFSET %s",
+                (limit, offset)
+            )
+            data = [format_baris(b) for b in cursor.fetchall()]
+            cursor.close()
+
+            return jsonify({
+                "tabel": tabel,
+                "jumlah": len(data),
+                "data": data
+            })
+        except Error:
+            app.logger.exception("Gagal mengambil data")
+            return jsonify({"error": "Gagal mengambil data"}), 500
+        finally:
+            db.close()
+
+    # POST: menambahkan data
+    body = request.get_json(silent=True)
+
+    if not isinstance(body, dict) or not body:
+        return jsonify({
+            "error": "Kirim body JSON object yang tidak kosong"
+        }), 400
+
+    kolom_tidak_valid = set(body) - set(kolom_tabel)
+    if kolom_tidak_valid:
+        return jsonify({
+            "error": "Kolom tidak dikenal",
+            "kolom": sorted(kolom_tidak_valid)
+        }), 400
+
+    kolom = list(body.keys())
+    kolom_sql = ", ".join(nama_sql(k) for k in kolom)
+    placeholder = ", ".join(["%s"] * len(kolom))
+    nilai = [body[k] for k in kolom]
+
+    db = koneksi_db()
+    try:
+        cursor = db.cursor()
+        cursor.execute(
+            f"INSERT INTO {tabel_sql} ({kolom_sql}) "
+            f"VALUES ({placeholder})",
+            nilai
+        )
+        db.commit()
+
+        return jsonify({
+            "pesan": "Data berhasil ditambahkan",
+            "id_baru": cursor.lastrowid or None
+        }), 201
+
+    except IntegrityError:
+        db.rollback()
+        return jsonify({
+            "error": "Data melanggar aturan database, misalnya foreign key atau nilai unik"
+        }), 409
+    except Error:
+        db.rollback()
+        app.logger.exception("Gagal menambahkan data")
+        return jsonify({
+            "error": "Gagal menambahkan data. Periksa kolom wajib dan tipe data."
+        }), 400
+    finally:
+        db.close()
+
+
+@app.route("/api/<tabel>/<id_data>",
+           methods=["GET", "PUT", "PATCH", "DELETE"])
+def satu_data(tabel, id_data):
+    try:
+        skema = daftar_tabel_dan_kolom()
+    except Error:
+        app.logger.exception("Koneksi database gagal")
+        return jsonify({"error": "Koneksi database gagal"}), 500
+
+    if tabel not in skema:
+        return jsonify({"error": "Tabel tidak ditemukan"}), 404
+
+    primary_keys = skema[tabel]["primary_key"]
+
+    if len(primary_keys) != 1:
+        return jsonify({
+            "error": "Operasi berdasarkan ID membutuhkan tepat satu primary key"
+        }), 400
+
+    pk = primary_keys[0]
+    tabel_sql = nama_sql(tabel)
+    pk_sql = nama_sql(pk)
+
+    db = koneksi_db()
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute(
+            f"SELECT * FROM {tabel_sql} WHERE {pk_sql} = %s LIMIT 1",
+            (id_data,)
+        )
+        baris = cursor.fetchone()
+
+        if baris is None:
+            return jsonify({"error": "Data tidak ditemukan"}), 404
+
+        # GET: membaca satu data
+        if request.method == "GET":
+            return jsonify({
+                "tabel": tabel,
+                "data": format_baris(baris)
+            })
+
+        # DELETE: menghapus data
+        if request.method == "DELETE":
+            cursor.execute(
+                f"DELETE FROM {tabel_sql} WHERE {pk_sql} = %s",
+                (id_data,)
+            )
+            db.commit()
+            return jsonify({"pesan": "Data berhasil dihapus"})
+
+        # PUT dan PATCH membutuhkan JSON
+        body = request.get_json(silent=True)
+
+        if not isinstance(body, dict) or not body:
+            return jsonify({
+                "error": "Kirim body JSON object yang tidak kosong"
+            }), 400
+
+        kolom_tabel = skema[tabel]["kolom"]
+
+        if pk in body:
+            return jsonify({
+                "error": f"Primary key '{pk}' tidak boleh diubah"
+            }), 400
+
+        tidak_valid = set(body) - set(kolom_tabel)
+        if tidak_valid:
+            return jsonify({
+                "error": "Kolom tidak dikenal",
+                "kolom": sorted(tidak_valid)
+            }), 400
+
+        if request.method == "PUT":
+            # PUT mengganti nilai semua kolom selain primary key.
+            kolom_wajib = [k for k in kolom_tabel if k != pk]
+            kurang = set(kolom_wajib) - set(body)
+
+            if kurang:
+                return jsonify({
+                    "error": "PUT membutuhkan semua kolom selain primary key",
+                    "kolom_belum_dikirim": sorted(kurang)
+                }), 400
+
+        kolom = list(body.keys())
+        set_sql = ", ".join(
+            f"{nama_sql(k)} = %s" for k in kolom
+        )
+        nilai = [body[k] for k in kolom]
+        nilai.append(id_data)
+
+        cursor.execute(
+            f"UPDATE {tabel_sql} SET {set_sql} "
+            f"WHERE {pk_sql} = %s",
+            nilai
+        )
+        db.commit()
+
+        return jsonify({
+            "pesan": (
+                "Data berhasil diganti"
+                if request.method == "PUT"
+                else "Data berhasil diperbarui"
+            )
+        })
+
+    except IntegrityError:
+        db.rollback()
+        return jsonify({
+            "error": "Operasi melanggar aturan database atau foreign key"
+        }), 409
+    except Error:
+        db.rollback()
+        app.logger.exception("Operasi database gagal")
+        return jsonify({
+            "error": "Operasi database gagal. Periksa tipe dan aturan kolom."
+        }), 400
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    try:
+        skema = daftar_tabel_dan_kolom()
+        print("Koneksi database berhasil.")
+        print("Tabel ditemukan:", ", ".join(sorted(skema.keys())))
+    except Error as e:
+        print("Koneksi database gagal:", e)
+        raise SystemExit(1)
+
+    app.run(debug=True, port=5000)
