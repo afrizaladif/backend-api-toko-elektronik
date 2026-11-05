@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS `Customer` (
 	`nama_customer` VARCHAR(50) NOT NULL,
 	`email_customer` VARCHAR(50) NOT NULL,
 	`password` VARCHAR(50) NOT NULL,
-	`no_telpon_customer` VARCHAR(50) NOT NULL,
+	`no_telpon_customer` VARCHAR(255) NOT NULL,
 	PRIMARY KEY(`id_customer`)
 );
 
