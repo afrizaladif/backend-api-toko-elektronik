@@ -3,21 +3,24 @@ from db import get_connection
 from werkzeug.security import generate_password_hash
 
 
-# Field yang boleh diperbarui
+# =====================================
+# KONFIGURASI FIELD
+# =====================================
+
 ALLOWED_FIELDS = (
-    "nama_customer",
-    "email_customer",
+    "nama_user",
+    "email",
     "password",
-    "no_telpon_customer"
+    "no_telepon"
 )
 
-# Field wajib untuk membuat customer dan PUT
 REQUIRED_FIELDS = set(ALLOWED_FIELDS)
 
 
-# ==============================
-# GET ALL CUSTOMER
-# ==============================
+# =====================================
+# GET ALL USERS
+# =====================================
+
 def get_all():
     connection = get_connection()
     cursor = connection.cursor(dictionary=True, buffered=True)
@@ -25,11 +28,14 @@ def get_all():
     try:
         cursor.execute("""
             SELECT
-                id_customer,
-                nama_customer,
-                email_customer,
-                no_telpon_customer
-            FROM customer
+                id_user,
+                nama_user,
+                email,
+                no_telepon,
+                role,
+                created_at,
+                updated_at
+            FROM users
         """)
 
         return cursor.fetchall()
@@ -39,23 +45,27 @@ def get_all():
         connection.close()
 
 
-# ==============================
-# GET CUSTOMER BY ID
-# ==============================
-def get_by_id(id_customer):
+# =====================================
+# GET USER BY ID
+# =====================================
+
+def get_by_id(id_user):
     connection = get_connection()
     cursor = connection.cursor(dictionary=True, buffered=True)
 
     try:
         cursor.execute("""
             SELECT
-                id_customer,
-                nama_customer,
-                email_customer,
-                no_telpon_customer
-            FROM customer
-            WHERE id_customer = %s
-        """, (id_customer,))
+                id_user,
+                nama_user,
+                email,
+                no_telepon,
+                role,
+                created_at,
+                updated_at
+            FROM users
+            WHERE id_user = %s
+        """, (id_user,))
 
         return cursor.fetchone()
 
@@ -64,11 +74,39 @@ def get_by_id(id_customer):
         connection.close()
 
 
-# ==============================
-# CREATE CUSTOMER (POST)
-# ==============================
+# =====================================
+# GET USER BY EMAIL
+# Khusus kebutuhan login
+# =====================================
+
+def get_by_email(email):
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True, buffered=True)
+
+    try:
+        cursor.execute("""
+            SELECT
+                id_user,
+                nama_user,
+                email,
+                password,
+                role
+            FROM users
+            WHERE email = %s
+        """, (email,))
+
+        return cursor.fetchone()
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
+# =====================================
+# CREATE USER (POST)
+# =====================================
+
 def create(data):
-    # Validasi field wajib
     missing_fields = REQUIRED_FIELDS - set(data.keys())
 
     if missing_fields:
@@ -77,7 +115,6 @@ def create(data):
             + ", ".join(sorted(missing_fields))
         )
 
-    # Tolak field yang tidak dikenal
     invalid_fields = set(data.keys()) - REQUIRED_FIELDS
 
     if invalid_fields:
@@ -86,7 +123,6 @@ def create(data):
             + ", ".join(sorted(invalid_fields))
         )
 
-    # Validasi nilai
     for field in ALLOWED_FIELDS:
         value = data[field]
 
@@ -94,6 +130,9 @@ def create(data):
             raise ValueError(
                 f"{field} wajib diisi dan harus berupa teks"
             )
+
+    if "@" not in data["email"]:
+        raise ValueError("Format email tidak valid")
 
     connection = get_connection()
     cursor = connection.cursor(buffered=True)
@@ -103,24 +142,24 @@ def create(data):
     try:
         # Mengunci proses pembuatan ID
         cursor.execute("""
-            SELECT GET_LOCK('customer_id_generation', 10)
+            SELECT GET_LOCK('user_id_generation', 10)
         """)
 
         result = cursor.fetchone()
 
         if result is None or result[0] != 1:
             raise RuntimeError(
-                "Gagal mendapatkan kunci pembuatan ID customer"
+                "Gagal mendapatkan kunci pembuatan ID user"
             )
 
         lock_acquired = True
 
-        # Mengambil ID customer terbesar
+        # Mengambil ID user terbesar
         cursor.execute("""
-            SELECT id_customer
-            FROM customer
-            WHERE id_customer REGEXP '^CUS[0-9]+$'
-            ORDER BY CAST(SUBSTRING(id_customer, 4) AS UNSIGNED) DESC
+            SELECT id_user
+            FROM users
+            WHERE id_user REGEXP '^USR[0-9]+$'
+            ORDER BY CAST(SUBSTRING(id_user, 4) AS UNSIGNED) DESC
             LIMIT 1
         """)
 
@@ -132,61 +171,61 @@ def create(data):
             last_number = int(result[0][3:])
             new_number = last_number + 1
 
-        # Membuat ID otomatis
-        id_customer = f"CUS{new_number:03d}"
+        id_user = f"USR{new_number:03d}"
 
         # Hash password
         password_hash = generate_password_hash(
             data["password"]
         )
 
-        # Menyimpan data customer
+        # Role registrasi selalu customer
         cursor.execute("""
-            INSERT INTO customer (
-                id_customer,
-                nama_customer,
-                email_customer,
+            INSERT INTO users (
+                id_user,
+                nama_user,
+                email,
                 password,
-                no_telpon_customer
+                no_telepon,
+                role
             )
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (
-            id_customer,
-            data["nama_customer"],
-            data["email_customer"],
+            id_user,
+            data["nama_user"],
+            data["email"],
             password_hash,
-            data["no_telpon_customer"]
+            data["no_telepon"],
+            "customer"
         ))
 
         connection.commit()
 
-        return id_customer
+        return id_user
 
     except Exception:
         connection.rollback()
         raise
 
     finally:
-        # Melepaskan lock setelah proses selesai
         if lock_acquired:
             try:
                 cursor.execute("""
-                    SELECT RELEASE_LOCK('customer_id_generation')
+                    SELECT RELEASE_LOCK('user_id_generation')
                 """)
                 cursor.fetchone()
 
             except Exception as e:
-                print("ERROR RELEASE LOCK:", repr(e))
+                print("ERROR RELEASE USER LOCK:", repr(e))
 
         cursor.close()
         connection.close()
 
 
-# ==============================
-# UPDATE CUSTOMER (PUT)
-# ==============================
-def update(id_customer, data):
-    # PUT wajib mengirim seluruh field
+# =====================================
+# UPDATE USER (PUT)
+# =====================================
+
+def update(id_user, data):
     missing_fields = REQUIRED_FIELDS - set(data.keys())
 
     if missing_fields:
@@ -195,7 +234,6 @@ def update(id_customer, data):
             + ", ".join(sorted(missing_fields))
         )
 
-    # Tolak field yang tidak dikenal
     invalid_fields = set(data.keys()) - REQUIRED_FIELDS
 
     if invalid_fields:
@@ -204,7 +242,6 @@ def update(id_customer, data):
             + ", ".join(sorted(invalid_fields))
         )
 
-    # Validasi nilai
     for field in ALLOWED_FIELDS:
         value = data[field]
 
@@ -213,29 +250,32 @@ def update(id_customer, data):
                 f"{field} wajib diisi dan harus berupa teks"
             )
 
+    if "@" not in data["email"]:
+        raise ValueError("Format email tidak valid")
+
     connection = get_connection()
     cursor = connection.cursor(buffered=True)
 
     try:
-        # Hash password sebelum disimpan
+        # Hash password
         password_hash = generate_password_hash(
             data["password"]
         )
 
         cursor.execute("""
-            UPDATE customer
+            UPDATE users
             SET
-                nama_customer = %s,
-                email_customer = %s,
+                nama_user = %s,
+                email = %s,
                 password = %s,
-                no_telpon_customer = %s
-            WHERE id_customer = %s
+                no_telepon = %s
+            WHERE id_user = %s
         """, (
-            data["nama_customer"],
-            data["email_customer"],
+            data["nama_user"],
+            data["email"],
             password_hash,
-            data["no_telpon_customer"],
-            id_customer
+            data["no_telepon"],
+            id_user
         ))
 
         affected_rows = cursor.rowcount
@@ -253,11 +293,11 @@ def update(id_customer, data):
         connection.close()
 
 
-# ==============================
-# PATCH CUSTOMER
-# ==============================
-def patch(id_customer, data):
-    # Tolak field yang tidak dikenal
+# =====================================
+# PATCH USER
+# =====================================
+
+def patch(id_user, data):
     invalid_fields = set(data.keys()) - set(ALLOWED_FIELDS)
 
     if invalid_fields:
@@ -271,18 +311,19 @@ def patch(id_customer, data):
             "Tidak ada data yang ingin diperbarui"
         )
 
-    # Validasi nilai
     for field, value in data.items():
         if not isinstance(value, str) or not value.strip():
             raise ValueError(
                 f"{field} wajib berupa teks dan tidak boleh kosong"
             )
 
+    if "email" in data and "@" not in data["email"]:
+        raise ValueError("Format email tidak valid")
+
     connection = get_connection()
     cursor = connection.cursor(buffered=True)
 
     try:
-        # Mengambil field yang dikirim pengguna
         fields = [
             field for field in ALLOWED_FIELDS
             if field in data
@@ -297,19 +338,18 @@ def patch(id_customer, data):
         for field in fields:
             value = data[field]
 
-            # Hash password jika diperbarui
             if field == "password":
                 value = generate_password_hash(value)
 
             values.append(value)
 
-        values.append(id_customer)
+        values.append(id_user)
 
         cursor.execute(
             f"""
-            UPDATE customer
+            UPDATE users
             SET {assignments}
-            WHERE id_customer = %s
+            WHERE id_user = %s
             """,
             tuple(values)
         )
@@ -329,18 +369,19 @@ def patch(id_customer, data):
         connection.close()
 
 
-# ==============================
-# DELETE CUSTOMER
-# ==============================
-def delete(id_customer):
+# =====================================
+# DELETE USER
+# =====================================
+
+def delete(id_user):
     connection = get_connection()
     cursor = connection.cursor(buffered=True)
 
     try:
         cursor.execute("""
-            DELETE FROM customer
-            WHERE id_customer = %s
-        """, (id_customer,))
+            DELETE FROM users
+            WHERE id_user = %s
+        """, (id_user,))
 
         affected_rows = cursor.rowcount
 

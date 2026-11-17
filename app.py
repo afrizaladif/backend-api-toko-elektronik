@@ -3,7 +3,7 @@ from flask import Flask, jsonify
 from db import get_connection
 
 # Import routes setiap tabel
-from routes.customer_routes import customer_bp
+from routes.users_routes import users_bp
 from routes.produk_routes import produk_bp
 from routes.pembelian_routes import pembelian_bp
 from routes.supplier_routes import supplier_bp
@@ -13,11 +13,11 @@ from routes.supply_routes import supply_bp
 from routes.detail_supply_routes import detail_supply_bp
 from routes.merk_routes import merk_bp
 from routes.kategori_routes import kategori_bp
-
+from routes.auth.auth_routes import auth_bp
 app = Flask(__name__)
 
 # Registrasi Blueprint
-app.register_blueprint(customer_bp)
+app.register_blueprint(users_bp)
 app.register_blueprint(produk_bp)
 app.register_blueprint(pembelian_bp)
 app.register_blueprint(supplier_bp)
@@ -27,7 +27,7 @@ app.register_blueprint(supply_bp)
 app.register_blueprint(detail_supply_bp)
 app.register_blueprint(merk_bp)
 app.register_blueprint(kategori_bp)
-
+app.register_blueprint(auth_bp, url_prefix='/api')
 
 # Endpoint halaman utama
 @app.route("/", methods=["GET"])
