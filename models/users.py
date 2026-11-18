@@ -18,6 +18,42 @@ REQUIRED_FIELDS = set(ALLOWED_FIELDS)
 
 
 # =====================================
+# VALIDASI DATA USER
+# =====================================
+
+def validate_data(data):
+    if not isinstance(data, dict):
+        raise ValueError("Data harus berupa JSON object")
+
+    missing_fields = REQUIRED_FIELDS - set(data.keys())
+
+    if missing_fields:
+        raise ValueError(
+            "Field wajib belum lengkap: "
+            + ", ".join(sorted(missing_fields))
+        )
+
+    invalid_fields = set(data.keys()) - REQUIRED_FIELDS
+
+    if invalid_fields:
+        raise ValueError(
+            "Field tidak diizinkan: "
+            + ", ".join(sorted(invalid_fields))
+        )
+
+    for field in ALLOWED_FIELDS:
+        value = data[field]
+
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"{field} wajib diisi dan harus berupa teks"
+            )
+
+    if "@" not in data["email"]:
+        raise ValueError("Format email tidak valid")
+
+
+# =====================================
 # GET ALL USERS
 # =====================================
 
@@ -76,7 +112,7 @@ def get_by_id(id_user):
 
 # =====================================
 # GET USER BY EMAIL
-# Khusus kebutuhan login
+# KHUSUS KEBUTUHAN LOGIN CUSTOMER
 # =====================================
 
 def get_by_email(email):
@@ -103,36 +139,11 @@ def get_by_email(email):
 
 
 # =====================================
-# CREATE USER (POST)
+# CREATE USER BERDASARKAN ROLE
 # =====================================
 
-def create(data):
-    missing_fields = REQUIRED_FIELDS - set(data.keys())
-
-    if missing_fields:
-        raise ValueError(
-            "Field wajib belum lengkap: "
-            + ", ".join(sorted(missing_fields))
-        )
-
-    invalid_fields = set(data.keys()) - REQUIRED_FIELDS
-
-    if invalid_fields:
-        raise ValueError(
-            "Field tidak diizinkan: "
-            + ", ".join(sorted(invalid_fields))
-        )
-
-    for field in ALLOWED_FIELDS:
-        value = data[field]
-
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(
-                f"{field} wajib diisi dan harus berupa teks"
-            )
-
-    if "@" not in data["email"]:
-        raise ValueError("Format email tidak valid")
+def _create_user(data, role):
+    validate_data(data)
 
     connection = get_connection()
     cursor = connection.cursor(buffered=True)
@@ -141,9 +152,10 @@ def create(data):
 
     try:
         # Mengunci proses pembuatan ID
-        cursor.execute("""
-            SELECT GET_LOCK('user_id_generation', 10)
-        """)
+        cursor.execute(
+            "SELECT GET_LOCK(%s, 10)",
+            ("user_id_generation",)
+        )
 
         result = cursor.fetchone()
 
@@ -153,6 +165,17 @@ def create(data):
             )
 
         lock_acquired = True
+
+        # Memeriksa email
+        cursor.execute("""
+            SELECT id_user
+            FROM users
+            WHERE email = %s
+            LIMIT 1
+        """, (data["email"],))
+
+        if cursor.fetchone():
+            raise ValueError("Email sudah terdaftar")
 
         # Mengambil ID user terbesar
         cursor.execute("""
@@ -174,11 +197,9 @@ def create(data):
         id_user = f"USR{new_number:03d}"
 
         # Hash password
-        password_hash = generate_password_hash(
-            data["password"]
-        )
+        password_hash = generate_password_hash(data["password"])
 
-        # Role registrasi selalu customer
+        # Menyimpan user
         cursor.execute("""
             INSERT INTO users (
                 id_user,
@@ -195,7 +216,7 @@ def create(data):
             data["email"],
             password_hash,
             data["no_telepon"],
-            "customer"
+            role
         ))
 
         connection.commit()
@@ -209,9 +230,10 @@ def create(data):
     finally:
         if lock_acquired:
             try:
-                cursor.execute("""
-                    SELECT RELEASE_LOCK('user_id_generation')
-                """)
+                cursor.execute(
+                    "SELECT RELEASE_LOCK(%s)",
+                    ("user_id_generation",)
+                )
                 cursor.fetchone()
 
             except Exception as e:
@@ -222,45 +244,33 @@ def create(data):
 
 
 # =====================================
+# CREATE CUSTOMER (POST)
+# =====================================
+
+def create(data):
+    return _create_user(data, "customer")
+
+
+# =====================================
+# CREATE ADMIN
+# =====================================
+
+def create_admin(data):
+    return _create_user(data, "admin")
+
+
+# =====================================
 # UPDATE USER (PUT)
 # =====================================
 
 def update(id_user, data):
-    missing_fields = REQUIRED_FIELDS - set(data.keys())
-
-    if missing_fields:
-        raise ValueError(
-            "Field PUT belum lengkap: "
-            + ", ".join(sorted(missing_fields))
-        )
-
-    invalid_fields = set(data.keys()) - REQUIRED_FIELDS
-
-    if invalid_fields:
-        raise ValueError(
-            "Field tidak diizinkan: "
-            + ", ".join(sorted(invalid_fields))
-        )
-
-    for field in ALLOWED_FIELDS:
-        value = data[field]
-
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(
-                f"{field} wajib diisi dan harus berupa teks"
-            )
-
-    if "@" not in data["email"]:
-        raise ValueError("Format email tidak valid")
+    validate_data(data)
 
     connection = get_connection()
     cursor = connection.cursor(buffered=True)
 
     try:
-        # Hash password
-        password_hash = generate_password_hash(
-            data["password"]
-        )
+        password_hash = generate_password_hash(data["password"])
 
         cursor.execute("""
             UPDATE users
@@ -279,7 +289,6 @@ def update(id_user, data):
         ))
 
         affected_rows = cursor.rowcount
-
         connection.commit()
 
         return affected_rows
@@ -298,6 +307,9 @@ def update(id_user, data):
 # =====================================
 
 def patch(id_user, data):
+    if not isinstance(data, dict):
+        raise ValueError("Data harus berupa JSON object")
+
     invalid_fields = set(data.keys()) - set(ALLOWED_FIELDS)
 
     if invalid_fields:
@@ -307,9 +319,7 @@ def patch(id_user, data):
         )
 
     if not data:
-        raise ValueError(
-            "Tidak ada data yang ingin diperbarui"
-        )
+        raise ValueError("Tidak ada data yang ingin diperbarui")
 
     for field, value in data.items():
         if not isinstance(value, str) or not value.strip():
@@ -355,7 +365,6 @@ def patch(id_user, data):
         )
 
         affected_rows = cursor.rowcount
-
         connection.commit()
 
         return affected_rows
@@ -384,7 +393,6 @@ def delete(id_user):
         """, (id_user,))
 
         affected_rows = cursor.rowcount
-
         connection.commit()
 
         return affected_rows

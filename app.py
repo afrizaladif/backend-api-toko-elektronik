@@ -14,6 +14,7 @@ from routes.detail_supply_routes import detail_supply_bp
 from routes.merk_routes import merk_bp
 from routes.kategori_routes import kategori_bp
 from routes.auth.auth_routes import auth_bp
+from routes.auth.admin_auth_routes import admin_auth_bp
 app = Flask(__name__)
 
 # Registrasi Blueprint
@@ -28,6 +29,7 @@ app.register_blueprint(detail_supply_bp)
 app.register_blueprint(merk_bp)
 app.register_blueprint(kategori_bp)
 app.register_blueprint(auth_bp, url_prefix='/api')
+app.register_blueprint(admin_auth_bp)
 
 # Endpoint halaman utama
 @app.route("/", methods=["GET"])
