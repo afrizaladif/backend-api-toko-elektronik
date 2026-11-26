@@ -1,8 +1,11 @@
-
 from flask import Flask, jsonify
 from db import get_connection
 
-# Import routes setiap tabel
+
+# ==========================================
+# IMPORT ROUTES / BLUEPRINT
+# ==========================================
+
 from routes.users_routes import users_bp
 from routes.produk_routes import produk_bp
 from routes.pembelian_routes import pembelian_bp
@@ -13,11 +16,28 @@ from routes.supply_routes import supply_bp
 from routes.detail_supply_routes import detail_supply_bp
 from routes.merk_routes import merk_bp
 from routes.kategori_routes import kategori_bp
+
+
+# ==========================================
+# IMPORT ROUTES AUTENTIKASI
+# ==========================================
+
 from routes.auth.auth_routes import auth_bp
 from routes.auth.admin_auth_routes import admin_auth_bp
+
+
+# ==========================================
+# INISIALISASI FLASK
+# ==========================================
+
 app = Flask(__name__)
 
-# Registrasi Blueprint
+
+# ==========================================
+# REGISTRASI BLUEPRINT
+# ==========================================
+
+# Blueprint data utama
 app.register_blueprint(users_bp)
 app.register_blueprint(produk_bp)
 app.register_blueprint(pembelian_bp)
@@ -28,19 +48,43 @@ app.register_blueprint(supply_bp)
 app.register_blueprint(detail_supply_bp)
 app.register_blueprint(merk_bp)
 app.register_blueprint(kategori_bp)
-app.register_blueprint(auth_bp, url_prefix='/api')
-app.register_blueprint(admin_auth_bp)
 
-# Endpoint halaman utama
+
+# ==========================================
+# REGISTRASI BLUEPRINT AUTENTIKASI
+# ==========================================
+
+# Blueprint autentikasi user
+# Route di dalam auth_bp akan mendapatkan prefix /api
+app.register_blueprint(
+    auth_bp,
+    url_prefix="/api"
+)
+
+
+# Blueprint autentikasi admin
+# Route admin sudah memiliki prefix /api di dalam file route
+app.register_blueprint(
+    admin_auth_bp
+)
+
+
+# ==========================================
+# ENDPOINT HALAMAN UTAMA
+# ==========================================
+
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
-        "pesan": "Backend API Toko Elektronik aktif.",
-        "status": "success"
+        "status": "success",
+        "pesan": "Backend API Toko Elektronik aktif."
     }), 200
 
 
-# Endpoint untuk mengecek koneksi database
+# ==========================================
+# ENDPOINT CEK KONEKSI DATABASE
+# ==========================================
+
 @app.route("/test-db", methods=["GET"])
 def test_db():
     conn = None
@@ -48,30 +92,65 @@ def test_db():
     try:
         conn = get_connection()
 
+        if conn is None:
+            return jsonify({
+                "status": "error",
+                "pesan": "Koneksi database gagal."
+            }), 500
+
         if conn.is_connected():
             return jsonify({
+                "status": "success",
                 "pesan": "Koneksi database berhasil.",
-                "database": "api",
-                "status": "success"
+                "database": "api"
             }), 200
 
         return jsonify({
-            "pesan": "Koneksi database gagal.",
-            "status": "error"
+            "status": "error",
+            "pesan": "Koneksi database tidak aktif."
         }), 500
 
-    except Exception:
+    except Exception as error:
+        print("Error koneksi database:", error)
+
         return jsonify({
-            "pesan": "Tidak dapat terhubung ke database.",
-            "status": "error"
+            "status": "error",
+            "pesan": "Tidak dapat terhubung ke database."
         }), 500
 
     finally:
-        if conn is not None and conn.is_connected():
-            conn.close()
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception as error:
+                print("Error menutup koneksi database:", error)
 
 
-# Menjalankan server Flask
+# ==========================================
+# PENANGANAN ERROR 404
+# ==========================================
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        "status": "error",
+        "message": "Endpoint tidak ditemukan."
+    }), 404
+
+
+# ==========================================
+# PENANGANAN ERROR 500
+# ==========================================
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    return jsonify({
+        "status": "error",
+        "message": "Terjadi kesalahan pada server."
+    }), 500
+
+
+
 if __name__ == "__main__":
     app.run(
         host="127.0.0.1",
