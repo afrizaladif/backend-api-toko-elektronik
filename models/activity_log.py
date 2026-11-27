@@ -53,11 +53,11 @@ def create(
         data = (
             id_log,
             id_user,
-            aktivitas,
-            endpoint,
-            method,
+            aktivitas[:100],
+            endpoint[:255],
+            method[:10],
             status_code,
-            ip_address
+            ip_address[:45] if ip_address else None
         )
 
         cursor.execute(sql, data)
@@ -68,7 +68,6 @@ def create(
     except Exception:
         if koneksi:
             koneksi.rollback()
-
         raise
 
     finally:
@@ -118,7 +117,7 @@ def get_all():
 
 
 # ==========================================
-# MENGAMBIL LOG BERDASARKAN USER
+# MENGAMBIL ACTIVITY LOG BERDASARKAN USER
 # ==========================================
 
 def get_by_user(id_user):

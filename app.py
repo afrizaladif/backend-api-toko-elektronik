@@ -16,6 +16,8 @@ from routes.supply_routes import supply_bp
 from routes.detail_supply_routes import detail_supply_bp
 from routes.merk_routes import merk_bp
 from routes.kategori_routes import kategori_bp
+from routes.activity_log_routes import activity_log_bp
+from middleware.activity_log import register_activity_logger
 
 
 # ==========================================
@@ -31,7 +33,7 @@ from routes.auth.admin_auth_routes import admin_auth_bp
 # ==========================================
 
 app = Flask(__name__)
-
+register_activity_logger(app)
 
 # ==========================================
 # REGISTRASI BLUEPRINT
@@ -48,6 +50,7 @@ app.register_blueprint(supply_bp)
 app.register_blueprint(detail_supply_bp)
 app.register_blueprint(merk_bp)
 app.register_blueprint(kategori_bp)
+app.register_blueprint(activity_log_bp)
 
 
 # ==========================================
